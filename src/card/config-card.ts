@@ -1,5 +1,4 @@
 import { modelLabel, supportedModels } from '../agent/models';
-import type { KnownChat } from '../bot/lark-info';
 import type { AgentKind, LarkCliIdentityPreset, ProfileMode } from '../config/profile-schema';
 import type { CotMessagesMode, MessageReplyMode } from '../config/schema';
 
@@ -19,9 +18,7 @@ export interface ConfigFormOpts {
   requireMentionInGroup: boolean;
   larkCliIdentity: LarkCliIdentityPreset;
   allowedUsers: string[];
-  allowedChats: string[];
   admins: string[];
-  knownChats: KnownChat[];
   /** URL of the running local web console (supervisor `--web-ui` mode). Shown
    * at the top of the card when present; omitted when no console is running. */
   consoleUrl?: string;
@@ -54,61 +51,45 @@ function atMentionLine(openIds: string[]): string {
   return openIds.map((id) => `<at id="${id}"></at>`).join('  ');
 }
 
-function chatList(chatIds: string[], knownChats: KnownChat[]): string {
-  if (chatIds.length === 0) return '_（暂无）_';
-  const nameMap = new Map(knownChats.map((chat) => [chat.id, chat.name]));
-  return chatIds
-    .map((id) => `- **${nameMap.get(id) ?? '(未知群)'}**（...${id.slice(-6)}）`)
-    .join('\n');
-}
-
 /** Form card for `/config`. */
 export function configFormCard(opts: ConfigFormOpts): object {
   const teamMode = opts.mode === 'team';
   const teamOverrideNote =
-    '\n\n_⚠️ 团队版已开启：本项被覆盖 —— 身份强制为「只允许应用身份」、访问控制不生效。切回个人版后恢复。_';
-  const accessElements: object[] = [
-    ...(teamMode
-      ? [
-          {
-            tag: 'markdown',
-            content:
-              '_⚠️ **团队版已开启**：访问控制暂不生效 —— 任何人 @ bot 都能使用（管理命令仍限 owner/管理员）。切回个人版后以下白名单恢复生效。_',
-          },
-          { tag: 'hr' },
-        ]
-      : []),
-    {
-      tag: 'markdown',
-      content: '_控制谁能通过私聊和群聊使用 bot。**留空 = 不响应聊天消息**。云文档评论按文档权限生效。_',
-    },
-    { tag: 'hr' },
-    {
-      tag: 'markdown',
-      content:
-        `**允许私聊的用户**（共 ${opts.allowedUsers.length} 人）\n` +
-        `${atMentionLine(opts.allowedUsers)}\n\n` +
-        '_加 / 删：_ `/invite user @某人`  `/remove user @某人`',
-    },
-    { tag: 'hr' },
-    {
-      tag: 'markdown',
-      content:
-        `**允许响应的群**（共 ${opts.allowedChats.length} 个）\n` +
-        `${chatList(opts.allowedChats, opts.knownChats)}\n\n` +
-        '_一键加全部 bot 所在的群：_ `/invite all group`\n' +
-        '_加 / 删（在目标群里发）：_ `/invite group`  `/remove group`',
-    },
-    { tag: 'hr' },
-    {
-      tag: 'markdown',
-      content:
-        `**管理员**（共 ${opts.admins.length} 人）\n` +
-        `${atMentionLine(opts.admins)}\n\n` +
-        '_可以跑敏感命令：`/account` `/config` `/exit` `/reconnect` `/doctor` `/cd` `/ws` `/invite` `/remove`。管理员也自动获得私聊权限，并可在未白名单群里管理访问控制。_\n\n' +
-        '_加 / 删：_ `/invite admin @某人`  `/remove admin @某人`',
-    },
-  ];
+    '\n\n_⚠️ 团队版已开启：身份强制为「只允许应用身份」。_';
+  const adminAccessElement = {
+    tag: 'markdown',
+    content:
+      `**管理员**（共 ${opts.admins.length} 人）\n` +
+      `${atMentionLine(opts.admins)}\n\n` +
+      '_可以跑敏感命令：`/account` `/config` `/exit` `/reconnect` `/doctor` `/cd` `/ws` `/invite` `/remove`。管理员也自动获得私聊权限，并绕过群聊用户黑白名单。_\n\n' +
+      '_加 / 删：_ `/invite admin @某人`  `/remove admin @某人`',
+  };
+  const accessElements: object[] = teamMode
+    ? [
+        {
+          tag: 'markdown',
+          content:
+            '_**团队版私聊对所有人开放**。群聊发送者仍严格受当前 profile 的 groupAllowedUsers/groupDenyUsers 配置控制。云文档评论按文档权限生效。_',
+        },
+        { tag: 'hr' },
+        adminAccessElement,
+      ]
+    : [
+        {
+          tag: 'markdown',
+          content: '_控制谁能通过私聊使用 bot。群成员规则由 profile 配置文件维护。**留空 = 不响应聊天消息**。云文档评论按文档权限生效。_',
+        },
+        { tag: 'hr' },
+        {
+          tag: 'markdown',
+          content:
+            `**允许私聊的用户**（共 ${opts.allowedUsers.length} 人）\n` +
+            `${atMentionLine(opts.allowedUsers)}\n\n` +
+            '_加 / 删：_ `/invite user @某人`  `/remove user @某人`',
+        },
+        { tag: 'hr' },
+        adminAccessElement,
+      ];
 
   return {
     schema: '2.0',
@@ -141,7 +122,7 @@ export function configFormCard(opts: ConfigFormOpts): object {
               content:
                 '**运行模式**\n' +
                 '_个人版(默认):Bot 是你一个人的助手,只有你和白名单用户能用,可携带你的个人授权访问文档/日历等_\n' +
-                '_团队版:Bot 是团队共用的助手,任何人 @ 即可使用(不做白名单校验);为避免他人借 Bot 动用你的个人权限,此模式下 CLI 强制只用应用(bot)身份,不使用个人授权_',
+                '_团队版:Bot 是团队共用的助手,私聊对所有人开放,群聊发送者仍严格按当前 profile 的 groupAllowedUsers/groupDenyUsers 控制;为避免他人借 Bot 动用你的个人权限,此模式下 CLI 强制只用应用(bot)身份,不使用个人授权_',
             },
             {
               tag: 'select_static',
@@ -338,6 +319,11 @@ export function configSavedCard(opts: ConfigFormOpts): object {
   const summarize = (list: string[]): string =>
     list.length === 0 ? '_(空)_' : `${list.length} 项`;
   const cotLabel = cotMessagesLabel(opts.cotMessages);
+  const accessSummary = opts.mode === 'team'
+    ? '_**团队版私聊对所有人开放**。群聊发送者仍严格受当前 profile 的 groupAllowedUsers/groupDenyUsers 配置控制。云文档评论按文档权限生效。_\n' +
+      `**管理员**:${summarize(opts.admins)}`
+    : `**允许私聊的用户**:${summarize(opts.allowedUsers)}\n` +
+      `**管理员**:${summarize(opts.admins)}`;
   return {
     schema: '2.0',
     config: { summary: { content: '偏好已保存' } },
@@ -356,12 +342,8 @@ export function configSavedCard(opts: ConfigFormOpts): object {
             `**run 探活**:\`${opts.runIdleTimeoutMinutes > 0 ? `${opts.runIdleTimeoutMinutes} 分钟` : '关闭'}\`\n` +
             `**群里需要 @ bot**:\`${opts.requireMentionInGroup ? '是' : '否'}\`\n\n` +
             `**lark-cli 身份策略**:\`${opts.mode === 'team' ? '只允许应用身份(团队版强制)' : opts.larkCliIdentity === 'user-default' ? '允许用户身份' : '只允许应用身份'}\`\n\n` +
-            '🔒 **访问控制**' +
-            (opts.mode === 'team' ? '（_团队版下不生效,任何人可用_）' : '') +
-            '\n' +
-            `**允许私聊的用户**:${summarize(opts.allowedUsers)}\n` +
-            `**允许响应的群**:${summarize(opts.allowedChats)}\n` +
-            `**管理员**:${summarize(opts.admins)}\n\n` +
+            '🔒 **访问控制**\n' +
+            `${accessSummary}\n\n` +
             '下条消息开始生效。',
         },
       ],

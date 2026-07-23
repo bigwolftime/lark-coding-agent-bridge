@@ -89,7 +89,7 @@ describe('policy fingerprint', () => {
     );
   });
 
-  it('sorts access and resource allowlists so ordering does not change digests', () => {
+  it('sorts access allowlists and group sender maps so ordering does not change digests', () => {
     const profile = createDefaultProfileConfig({
       agentKind: 'claude',
       accounts: {
@@ -101,17 +101,40 @@ describe('policy fingerprint', () => {
       },
       access: {
         allowedUsers: ['ou_b', 'ou_a'],
-        allowedChats: ['oc_b', 'oc_a'],
         admins: ['ou_admin_b', 'ou_admin_a'],
+        groupAllowedUsers: {
+          oc_group_b: ['ou_allowed_b', 'ou_allowed_a'],
+          oc_group_a: ['ou_allowed_d', 'ou_allowed_c'],
+        },
+        groupDenyUsers: {
+          oc_group_b: ['ou_denied_b', 'ou_denied_a'],
+          oc_group_a: ['ou_denied_d', 'ou_denied_c'],
+        },
       },
     });
 
-    expect(accessPolicyDigest(profile.access)).toBe(
+    const reorderedAccess = {
+      ...profile.access,
+      allowedUsers: ['ou_a', 'ou_b'],
+      admins: ['ou_admin_a', 'ou_admin_b'],
+      groupAllowedUsers: {
+        oc_group_a: ['ou_allowed_c', 'ou_allowed_d'],
+        oc_group_b: ['ou_allowed_a', 'ou_allowed_b'],
+      },
+      groupDenyUsers: {
+        oc_group_a: ['ou_denied_c', 'ou_denied_d'],
+        oc_group_b: ['ou_denied_a', 'ou_denied_b'],
+      },
+    };
+
+    expect(accessPolicyDigest(profile.access)).toBe(accessPolicyDigest(reorderedAccess));
+    expect(accessPolicyDigest(profile.access)).not.toBe(
       accessPolicyDigest({
-        ...profile.access,
-        allowedUsers: ['ou_a', 'ou_b'],
-        allowedChats: ['oc_a', 'oc_b'],
-        admins: ['ou_admin_a', 'ou_admin_b'],
+        ...reorderedAccess,
+        groupDenyUsers: {
+          ...reorderedAccess.groupDenyUsers,
+          oc_group_b: ['ou_denied_a', 'ou_other_denied_user'],
+        },
       }),
     );
     expect(

@@ -383,7 +383,8 @@ describe('profile runtime resolver', () => {
           requireMentionInGroup: false,
           access: {
             allowedUsers: ['ou_allowed'],
-            allowedChats: ['oc_allowed'],
+            groupAllowedUsers: { oc_allowed: ['ou_allowed', 'ou_bot'] },
+            groupDenyUsers: { oc_allowed: ['ou_blocked'] },
             admins: ['ou_admin'],
           },
         },
@@ -411,7 +412,8 @@ describe('profile runtime resolver', () => {
     });
     expect(runtime.profileConfig.access).toEqual({
       allowedUsers: ['ou_allowed'],
-      allowedChats: ['oc_allowed'],
+      groupAllowedUsers: { oc_allowed: ['ou_allowed', 'ou_bot'] },
+      groupDenyUsers: { oc_allowed: ['ou_blocked'] },
       admins: ['ou_admin'],
       requireMentionInGroup: false,
     });
@@ -427,7 +429,8 @@ describe('profile runtime resolver', () => {
     expect(saved.profiles.claude).not.toHaveProperty('sandbox');
     expect(saved.profiles.claude?.access).toEqual({
       allowedUsers: ['ou_allowed'],
-      allowedChats: ['oc_allowed'],
+      groupAllowedUsers: { oc_allowed: ['ou_allowed', 'ou_bot'] },
+      groupDenyUsers: { oc_allowed: ['ou_blocked'] },
       admins: ['ou_admin'],
       requireMentionInGroup: false,
     });

@@ -148,9 +148,7 @@ If a profile was created with the wrong agent kind, stop or unregister any match
 | `/config` | Adjust presentation preferences, access settings, and lark-cli identity policy |
 | `/invite user @name` | Allow a user to use the bot in DMs |
 | `/invite admin @name` | Add an access-control admin |
-| `/invite group` | Allow the current group to use the bot |
-| `/invite all group` | Allow all groups the bot has joined |
-| `/remove user @name`, `/remove admin @name`, `/remove group` | Remove access entries |
+| `/remove user @name`, `/remove admin @name` | Remove a DM user or access-control admin |
 | `/stop` | Stop the current run, including the card stop button |
 | `/timeout [N\|off\|default]` | Set or clear the current session idle watchdog |
 | `/ps` | List local bridge processes |
@@ -238,41 +236,22 @@ Set `LARK_CHANNEL_HOME=/path/to/state` to move all local bridge state. `LARK_CHA
 
 ## Access control
 
-**Chat access is private by default: out of the box, only *you* can use the bot in DMs and groups.** "You" = whoever created / owns the Feishu app (the person who scanned the QR to set it up). The bot figures out who the app owner is automatically from Feishu, so **solo chat use needs zero configuration** — you can DM it and `@`-mention it in any group, and everyone else's chat messages are silently ignored (no "permission denied" reply, which would only confirm the bot exists). Cloud-doc comments are document-scoped; see below.
+Chat access is private by default. The app owner is detected automatically and can use the bot in DMs and groups without extra configuration. `allowedUsers` controls DMs only; it does not grant group access. Admins can also use DMs and manage access with `/config`, `/invite`, and `/remove`.
 
-To let other people or groups in, add them to one of three lists:
+`/invite` and `/remove` only manage DM users and admins: `/invite user`, `/remove user`, `/invite admin`, and `/remove admin`. Only the owner and admins can run these commands. Group access currently has no management entry point inside Feishu / Lark; edit the matching profile's config file instead.
 
-| List | Controls | Add | Remove |
-|------|----------|-----|--------|
-| **Allowed users** | who can DM the bot | `/invite user @them` | `/remove user @them` |
-| **Allowed chats** | which groups the bot answers in (for **everyone** in them) | `/invite group` (current group) / `/invite all group` (every group the bot is in) | `/remove group` (current group) |
-| **Admins** | who can change settings, and use the bot in any group | `/invite admin @them` | `/remove admin @them` |
+Group access uses two maps:
 
-> `/invite` and `/remove` can only be run by **you (the creator) and admins**. The `@` in the command points at the *target person* (not the bot) — the bot resolves the mention to their identity, so you never deal with raw IDs.
+- `groupAllowedUsers` maps each group `chat_id` to the human or bot sender `open_id`s allowed in that group.
+- `groupDenyUsers` maps each group `chat_id` to the human or bot sender `open_id`s denied in that group.
 
-### Two identities that bypass everything
+Human and bot senders are matched the same way, using the event `senderId` / `open_id` value. Owner and admins bypass both group maps. For every other sender, the current chat's deny map is checked first, so **deny wins** on conflicts. The sender must then appear in the current chat's allow map. If the current group has **no allow entry**, or the sender is not in its allow array, access is denied. Team mode opens DMs only; group messages still pass through both group maps.
 
-- **You (the creator)**: subject to no list at all — DMs, any group, every command. You **can never lock yourself out**: even if the lists get messed up, DM the bot and send `/config` to get back in. Transfer the app's ownership in the Feishu console and the bot follows the new owner automatically.
-- **Admins**: can DM, run management commands like `/config`, and **bypass the allowed-chats list** — the bot answers them in any group, listed or not. Good for teammates who co-maintain the bot.
+`requireMentionInGroup` is a separate condition: when enabled, an authorized group sender must also mention the bot. Unauthorized messages are always ignored silently, including messages that `@bot`. Cloud-doc comments are document-scoped; see below.
 
-### Common setups
+### Editing group access in the profile config
 
-- **Just me** → nothing to do; this is the default.
-- **Let a teammate DM the bot** → `/invite user @them`
-- **Open a work group to everyone in it** → send `/invite group` inside that group
-- **First-time setup, onboard every group the bot is already in** → `/invite all group` pulls them all into the list at once; trim with `/remove group` afterwards
-- **Add a co-admin** → `/invite admin @them`
-
-### Worth knowing
-
-- Changes take effect on the **next message** — no restart needed.
-- **In groups you must `@` the bot first** (DMs don't need it). That's a separate toggle (`/config` → "require @ in groups"), independent of the lists above.
-- Strangers get pure silence — no reply at all. The one exception: if someone `@`-mentions the bot in a group that hasn't been opened up, the bot posts a friendly one-liner telling them an admin can run `/invite group` to enable it.
-- Cloud-doc comments are document-scoped: anyone who can comment in a supported document and mention the bot can trigger a reply.
-
-### Advanced: editing the config file directly
-
-If you'd rather not do it inside Feishu, `/invite` and `/config` write the matching profile's `access` field in `~/.lark-channel/config.json`. Empty lists mean nobody from that list, not open access. This is a profile-field snippet; do not replace the whole `config.json` with it:
+The group maps can currently be changed only by editing the matching profile's `access` field in `~/.lark-channel/config.json`. This is a profile-field snippet; do not replace the whole `config.json` with it:
 
 ```json
 {
@@ -281,9 +260,14 @@ If you'd rather not do it inside Feishu, `/invite` and `/config` write the match
     "claude": {
       "agentKind": "claude",
       "access": {
-        "allowedUsers": ["ou_xxxxxxxxxxxxx"],
-        "allowedChats": ["oc_xxxxxxxxxxxxx"],
-        "admins": ["ou_xxxxxxxxxxxxx"],
+        "allowedUsers": ["ou_dm_user"],
+        "admins": ["ou_admin"],
+        "groupAllowedUsers": {
+          "oc_group_a": ["ou_human_1", "ou_bot_1"]
+        },
+        "groupDenyUsers": {
+          "oc_group_a": ["ou_blocked"]
+        },
         "requireMentionInGroup": true
       }
     }
@@ -291,13 +275,15 @@ If you'd rather not do it inside Feishu, `/invite` and `/config` write the match
 }
 ```
 
-`allowedUsers` / `admins` take user `open_id`s; `allowedChats` takes group `chat_id`s. The easiest way to find an ID by hand: have the person message the bot (or `@` it in the group), then check the active profile's log:
+Each group-map key is a group `chat_id`, and each value is an array of sender `open_id`s. A bot entry also uses the `senderId` / `open_id` from its message event. Do not add the bridge bot itself to `groupAllowedUsers`, because its own messages can create a message loop.
+
+To find IDs, have the intended human or bot sender post a message, then check the active profile's log:
 
 ```bash
-grep '"event":"enter"' ~/.lark-channel/profiles/<profile>/logs/bridge-$(date +%Y%m%d).jsonl | tail -5
+grep -F '"phase":"intake"' ~/.lark-channel/profiles/<profile>/logs/bridge-$(date +%Y%m%d).jsonl | grep -F '"event":"enter"' | tail -5
 ```
 
-Each line carries `chatId` (group / DM id) and `senderId` (user `open_id`). After a manual edit, **restart the bridge** or send `/reconnect` from an allowed admin context to apply it. For day-to-day tweaks `/invite` / `/config` are easier; direct edits are mainly for deployment scripts that pre-seed access.
+Each matching intake entry carries `chatId` (the group / DM ID) and `sender` (the human or bot sender `open_id`). After a manual edit, **restart the bridge** or send `/reconnect` from an allowed admin context to apply it. `/invite` and `/remove` remain convenient for DM users and admins, but they do not modify either group map.
 
 ## Cloud-doc comments
 

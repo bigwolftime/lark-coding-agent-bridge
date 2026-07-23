@@ -265,7 +265,7 @@ describe('Bridge command contracts', () => {
 
     const configCard = JSON.stringify(lastContent(h.channel));
     expect(configCard).not.toContain('allowed_users');
-    expect(configCard).not.toContain('allowed_chats');
+    expect(configCard).not.toContain(['allowed', 'chats'].join('_'));
     expect(configCard).not.toContain('admins');
   });
 
@@ -278,18 +278,10 @@ describe('Bridge command contracts', () => {
     await expect(
       h.run('/invite admin @Bob', { mentions: [mention('ou-bob', 'Bob')] }),
     ).resolves.toBe(true);
-    await expect(
-      h.run('/invite group', {
-        chatId: 'oc-group-1',
-        scope: 'oc-group-1',
-        chatMode: 'group',
-      }),
-    ).resolves.toBe(true);
 
     let root = await loadRootConfig(h.controls.configPath);
     expect(root?.profiles.claude?.access.allowedUsers).toContain('ou-alice');
     expect(root?.profiles.claude?.access.admins).toEqual(['ou-admin', 'ou-bob']);
-    expect(root?.profiles.claude?.access.allowedChats).toContain('oc-group-1');
     expect(root?.profiles.claude?.preferences).not.toHaveProperty('access');
 
     await expect(
@@ -299,17 +291,25 @@ describe('Bridge command contracts', () => {
     expect(root?.profiles.claude?.access.allowedUsers).not.toContain('ou-alice');
   });
 
-  it('adds every known bot group through /invite all group', async () => {
+  it('does not advertise or persist legacy group access command variants', async () => {
     const h = await createHarness();
-    h.controls.knownChats = [
-      { id: 'oc-group-1', name: 'Group One' },
-      { id: 'oc-group-2', name: 'Group Two' },
+    const legacyGroupCommands = [
+      ['/invite', 'group'].join(' '),
+      ['/invite', 'all', 'group'].join(' '),
+      ['/remove', 'group'].join(' '),
     ];
+    const before = structuredClone(h.controls.profileConfig.access.groupAllowedUsers);
 
-    await expect(h.run('/invite all group')).resolves.toBe(true);
+    for (const command of legacyGroupCommands) {
+      await expect(h.run(command)).resolves.toBe(true);
+      const usage = lastMarkdown(h.channel);
+      const base = command.split(' ')[0] ?? '';
+      expect(usage).toContain(`${base} user`);
+      expect(usage).not.toContain(command);
+    }
 
     const root = await loadRootConfig(h.controls.configPath);
-    expect(root?.profiles.claude?.access.allowedChats).toEqual(['oc-group-1', 'oc-group-2']);
+    expect(root?.profiles.claude?.access.groupAllowedUsers).toEqual(before);
   });
 });
 

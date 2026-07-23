@@ -60,7 +60,6 @@ export interface ConfigView {
   larkCliIdentity: LarkCliIdentityPreset;
   access: {
     allowedUsers: string[];
-    allowedChats: string[];
     admins: string[];
     /** Per-chat @-mention override (chat_id → bool); overrides the global
      * requireMentionInGroup. Absent chats follow the global setting. */
@@ -88,7 +87,6 @@ export function buildConfigView(state: MutableProfileState, live = false): Confi
     larkCliIdentity: state.profileConfig.larkCli.identityPreset,
     access: {
       allowedUsers: state.profileConfig.access.allowedUsers,
-      allowedChats: state.profileConfig.access.allowedChats,
       admins: state.profileConfig.access.admins,
       chatRequireMention: state.profileConfig.access.chatRequireMention ?? {},
     },
@@ -277,17 +275,16 @@ export async function applyConfigToDisk(
   return buildConfigView(state, false);
 }
 
-type AccessKind = 'user' | 'admin' | 'chat';
-const ACCESS_LIST: Record<AccessKind, 'allowedUsers' | 'admins' | 'allowedChats'> = {
+type AccessKind = 'user' | 'admin';
+const ACCESS_LIST: Record<AccessKind, 'allowedUsers' | 'admins'> = {
   user: 'allowedUsers',
   admin: 'admins',
-  chat: 'allowedChats',
 };
 
 /**
  * Mutate the profile's access. Two operations:
- *  - `add`/`remove` a single id from a list (user/admin/chat) — mirrors
- *    `/invite` `/remove`. Removing a chat also drops its @-mention override.
+ *  - `add`/`remove` a single id from a user/admin list — mirrors
+ *    `/invite` `/remove`.
  *  - `set-mention`: set (or clear) a chat's per-chat @-mention override. Pass
  *    `requireMention: true|false` to override, or `null` to follow the global.
  */
@@ -301,6 +298,7 @@ export async function mutateAccess(
   const id = typeof fv.id === 'string' ? fv.id.trim() : '';
 
   if (action === 'set-mention') {
+    if (kind !== 'chat') throw new ApiError(400, 'set-mention kind must be chat');
     if (!id) throw new ApiError(400, 'id is required');
     if (
       fv.requireMention !== null &&
@@ -322,8 +320,8 @@ export async function mutateAccess(
   if (action !== 'add' && action !== 'remove') {
     throw new ApiError(400, 'action must be add|remove|set-mention');
   }
-  if (kind !== 'user' && kind !== 'admin' && kind !== 'chat') {
-    throw new ApiError(400, 'kind must be user|admin|chat');
+  if (kind !== 'user' && kind !== 'admin') {
+    throw new ApiError(400, 'kind must be user|admin');
   }
   if (!id) throw new ApiError(400, 'id is required');
   const listKey = ACCESS_LIST[kind];
@@ -332,14 +330,7 @@ export async function mutateAccess(
     const set = new Set(current[listKey]);
     if (action === 'add') set.add(id);
     else set.delete(id);
-    const next = { ...current, [listKey]: [...set] };
-    // Dropping a chat also drops its @-mention override so it can't linger.
-    if (action === 'remove' && kind === 'chat' && next.chatRequireMention?.[id] !== undefined) {
-      const map = { ...next.chatRequireMention };
-      delete map[id];
-      next.chatRequireMention = map;
-    }
-    return next;
+    return { ...current, [listKey]: [...set] };
   });
   return accessView(access);
 }
@@ -347,7 +338,6 @@ export async function mutateAccess(
 function accessView(access: ProfileAccess): ConfigView['access'] {
   return {
     allowedUsers: access.allowedUsers,
-    allowedChats: access.allowedChats,
     admins: access.admins,
     chatRequireMention: access.chatRequireMention ?? {},
   };

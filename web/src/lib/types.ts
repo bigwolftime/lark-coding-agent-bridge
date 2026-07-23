@@ -50,7 +50,6 @@ export interface ConfigView {
   larkCliIdentity: LarkCliIdentity;
   access: {
     allowedUsers: string[];
-    allowedChats: string[];
     admins: string[];
     /** chat_id → per-chat @-mention override (overrides requireMentionInGroup). */
     chatRequireMention: Record<string, boolean>;

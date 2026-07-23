@@ -120,7 +120,8 @@ describe('profile schema', () => {
       },
       access: {
         allowedUsers: [],
-        allowedChats: [],
+        groupAllowedUsers: { oc_group_a: ['ou_user', 'ou_bot'] },
+        groupDenyUsers: { oc_group_a: ['ou_blocked'] },
         admins: [],
       },
     });
@@ -129,10 +130,121 @@ describe('profile schema', () => {
     expect(JSON.stringify(cfg)).not.toMatch(/access\.semantics|legacy-open|explicit/);
     expect(cfg.access).toEqual({
       allowedUsers: [],
-      allowedChats: [],
+      groupAllowedUsers: { oc_group_a: ['ou_user', 'ou_bot'] },
+      groupDenyUsers: { oc_group_a: ['ou_blocked'] },
       admins: [],
       requireMentionInGroup: true,
     });
+  });
+
+  it('normalizes group sender maps fail-closed', () => {
+    const cfg = normalizeProfileConfig({
+      schemaVersion: 2,
+      agentKind: 'claude',
+      accounts: { app },
+      access: {
+        groupAllowedUsers: {
+          ' oc_group_a ': ['ou_user', 42, 'ou_bot'],
+          '': ['ou_empty_chat'],
+          '   ': ['ou_whitespace_chat'],
+          oc_not_an_array: 'ou_not_an_array',
+          oc_only_non_strings: [42, null],
+        } as never,
+        groupDenyUsers: [] as never,
+      },
+    });
+
+    expect(cfg.access.groupAllowedUsers).toEqual({
+      oc_group_a: ['ou_user', 'ou_bot'],
+    });
+    expect(cfg.access.groupDenyUsers).toEqual({});
+  });
+
+  it('merges and deduplicates sender lists for normalized chat ID collisions', () => {
+    const cfg = normalizeProfileConfig({
+      schemaVersion: 2,
+      agentKind: 'claude',
+      accounts: { app },
+      access: {
+        groupAllowedUsers: {
+          oc_group_a: ['ou_user', 'ou_shared'],
+          ' oc_group_a ': ['ou_shared', 'ou_bot'],
+        },
+        groupDenyUsers: {
+          oc_group_a: ['ou_blocked', 'ou_shared'],
+          ' oc_group_a ': ['ou_shared', 'ou_denied_bot'],
+        },
+      },
+    });
+
+    expect(cfg.access.groupAllowedUsers).toEqual({
+      oc_group_a: ['ou_user', 'ou_shared', 'ou_bot'],
+    });
+    expect(cfg.access.groupDenyUsers).toEqual({
+      oc_group_a: ['ou_blocked', 'ou_shared', 'ou_denied_bot'],
+    });
+  });
+
+  it('trims group sender IDs and drops empty or duplicate normalized values', () => {
+    const cfg = normalizeProfileConfig({
+      schemaVersion: 2,
+      agentKind: 'claude',
+      accounts: { app },
+      access: {
+        groupAllowedUsers: {
+          oc_group_a: [' ou_user ', '   ', 'ou_shared'],
+          ' oc_group_a ': ['ou_user', '\t', ' ou_bot '],
+        },
+        groupDenyUsers: {
+          oc_group_a: [' ou_blocked ', '', 'ou_shared'],
+          ' oc_group_a ': ['ou_blocked', '\n', ' ou_denied_bot '],
+        },
+      },
+    });
+
+    expect(cfg.access.groupAllowedUsers).toEqual({
+      oc_group_a: ['ou_user', 'ou_shared', 'ou_bot'],
+    });
+    expect(cfg.access.groupDenyUsers).toEqual({
+      oc_group_a: ['ou_blocked', 'ou_shared', 'ou_denied_bot'],
+    });
+  });
+
+  it('preserves __proto__ as a group sender map data key', () => {
+    const groupDenyUsers = JSON.parse('{"__proto__":["ou_blocked"]}');
+    const cfg = normalizeProfileConfig({
+      schemaVersion: 2,
+      agentKind: 'claude',
+      accounts: { app },
+      access: { groupDenyUsers },
+    });
+
+    expect(Object.getPrototypeOf(cfg.access.groupDenyUsers)).toBe(Object.prototype);
+    expect(Object.hasOwn(cfg.access.groupDenyUsers, '__proto__')).toBe(true);
+    expect(cfg.access.groupDenyUsers.__proto__).toEqual(['ou_blocked']);
+    expect(JSON.stringify(cfg.access.groupDenyUsers)).toBe('{"__proto__":["ou_blocked"]}');
+  });
+
+  it('ignores allowedChats from old config and defaults group sender maps', () => {
+    const cfg = normalizeProfileConfig({
+      schemaVersion: 2,
+      agentKind: 'claude',
+      accounts: { app },
+      access: {
+        allowedUsers: ['ou_user'],
+        allowedChats: ['oc_legacy'] as never,
+        admins: ['ou_admin'],
+      },
+    });
+
+    expect(cfg.access).toEqual({
+      allowedUsers: ['ou_user'],
+      groupAllowedUsers: {},
+      groupDenyUsers: {},
+      admins: ['ou_admin'],
+      requireMentionInGroup: true,
+    });
+    expect(cfg.access).not.toHaveProperty('allowedChats');
   });
 
   it('drops invalid legacy message reply values instead of blocking config load', () => {

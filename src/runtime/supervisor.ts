@@ -175,7 +175,6 @@ class ManagedProfile {
       profile: currentPaths.profile,
       profileConfig: currentProfileConfig,
       ownerRefreshState: 'unknown',
-      knownChats: [],
       async refreshOwner(channelOverride) {
         const target = channelOverride ?? self.bridge?.channel;
         if (!target) return;

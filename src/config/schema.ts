@@ -71,15 +71,17 @@ export type CotMessagesMode = 'off' | 'brief' | 'detailed';
 
 /**
  * Access control settings. Empty lists are fail-closed in the v2 policy:
- * no DM senders, no group chats, and only the runtime owner can administer
+ * no DM senders, no group senders, and only the runtime owner can administer
  * the bot. Runtime owner/admin bypass is applied by the policy layer because
  * owner identity is refreshed from Lark rather than stored in config.json.
  */
 export interface AppAccess {
-  /** open_id allowlist for DM senders. Group senders are gated by chat. */
+  /** open_id allowlist for DM senders. */
   allowedUsers?: string[];
-  /** chat_id allowlist for groups the bot responds in. Does not apply to p2p. */
-  allowedChats?: string[];
+  /** Per-group open_id allowlist for group senders. */
+  groupAllowedUsers?: Record<string, string[]>;
+  /** Per-group open_id denylist for group senders. */
+  groupDenyUsers?: Record<string, string[]>;
   /** open_id list with admin privileges. Gates sensitive commands
    * (/account, /config, /exit, /reconnect, /doctor, /cd, /ws, /doc,
    * /invite, /remove). */

@@ -63,7 +63,6 @@ import { ProcessPool } from './process-pool';
 import { fetchQuotedContext, fetchTopicContext, type QuotedContext } from './quote';
 import { lookupMessageThreadId } from './thread-id';
 import { addWorkingReaction, removeReaction } from './reaction';
-import { fetchKnownChats } from './lark-info';
 import type { AppPaths } from '../config/app-paths';
 import {
   consumeCotEvents,
@@ -429,7 +428,6 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     appId: cfg.accounts.app.id,
   });
   await ownerRefresh.start();
-  const knownChatsRefresh = startKnownChatsRefreshTimer(channel, controls);
 
   const identity = channel.botIdentity;
   // Late-bind the bot's own IM identity into the agent adapter so the system
@@ -468,7 +466,6 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     disconnect: async () => {
       activeRuns.pauseNewRuns('bridge-disconnect');
       ownerRefresh.stop();
-      knownChatsRefresh.stop();
       keepalive.stop();
       pending.cancelAll();
       const [disconnectResult, stopAllResult, ...flushResults] = await Promise.allSettled([
@@ -492,41 +489,6 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       }
     },
   };
-}
-
-function startKnownChatsRefreshTimer(
-  channel: LarkChannel,
-  controls: Controls,
-): { stop(): void } {
-  const intervalMs = 30 * 60 * 1000;
-  const refresh = async (): Promise<void> => {
-    const chats = await fetchKnownChats(channel);
-    if (chats.length > 0) {
-      controls.knownChats = chats;
-    }
-  };
-  void refresh();
-  const timer = setInterval(() => void refresh(), intervalMs);
-  return {
-    stop() {
-      clearInterval(timer);
-    },
-  };
-}
-
-async function sendNonAllowedGroupHint(
-  channel: LarkChannel,
-  chatId: string,
-  replyToMessageId: string,
-): Promise<void> {
-  const text =
-    '当前群尚未加入响应列表，所以 bot 不会处理消息。\n' +
-    'Bot owner/管理员可在本群发 /invite group 加入白名单。';
-  try {
-    await channel.send(chatId, { text }, { replyTo: replyToMessageId });
-  } catch {
-    await channel.send(chatId, { text });
-  }
 }
 
 interface IntakeDeps {
@@ -630,11 +592,6 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
       sender: msg.senderId.slice(-6),
       reason: accessDecision.reason,
     });
-    if (msg.chatType !== 'p2p' && accessDecision.reason === 'denied-chat' && msg.mentionedBot) {
-      void sendNonAllowedGroupHint(channel, msg.chatId, msg.messageId).catch((err) =>
-        log.warn('intake', 'non-allowed-hint-failed', { err: String(err) }),
-      );
-    }
     return;
   }
 

@@ -18,10 +18,10 @@ export interface AccessDecision {
     | 'allowed-team'
     | 'allowed-user'
     | 'allowed-admin'
-    | 'allowed-chat'
+    | 'allowed-group-user'
     | 'comment-mention'
     | 'denied-user'
-    | 'denied-chat'
+    | 'denied-group-user'
     | 'denied-admin';
 }
 
@@ -36,8 +36,9 @@ export function canUseDm(
   senderId: string,
 ): AccessDecision {
   if (isCreator(controls, senderId)) return allow('owner');
-  // Team mode opens up *usage* to everyone — no allowlist gating. Admin
-  // commands stay owner/admin-gated via canRunAdminCommand (unchanged).
+  // Team mode opens direct-message access to everyone. Group messages still
+  // go through groupAllowedUsers/groupDenyUsers in canUseGroup; admin commands
+  // stay owner/admin-gated via canRunAdminCommand.
   if (profile.mode === 'team') return allow('allowed-team');
   if (profile.access.allowedUsers.includes(senderId)) return allow('allowed-user');
   if (profile.access.admins.includes(senderId)) return allow('allowed-admin');
@@ -50,11 +51,12 @@ export function canUseGroup(
   chatId: string,
   senderId: string,
 ): AccessDecision {
+  if (!chatId.trim() || !senderId.trim()) return deny('denied-group-user');
   if (isCreator(controls, senderId)) return allow('owner');
-  if (profile.mode === 'team') return allow('allowed-team');
   if (profile.access.admins.includes(senderId)) return allow('allowed-admin');
-  if (profile.access.allowedChats.includes(chatId)) return allow('allowed-chat');
-  return deny('denied-chat');
+  if (profile.access.groupDenyUsers[chatId]?.includes(senderId)) return deny('denied-group-user');
+  if (profile.access.groupAllowedUsers[chatId]?.includes(senderId)) return allow('allowed-group-user');
+  return deny('denied-group-user');
 }
 
 /**

@@ -1,8 +1,9 @@
 import type { NormalizedMessage } from '@larksuite/channel';
-import { realpath } from 'node:fs/promises';
+import { readFile, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema.js';
+import { closeLogger, configureLogger, flushLogger } from '../../../src/core/logger.js';
 import { SessionStore } from '../../../src/session/store.js';
 import { WorkspaceStore } from '../../../src/workspace/store.js';
 import { FakeAgentAdapter } from '../../helpers/fake-agent.js';
@@ -58,8 +59,8 @@ interface FakeLarkChannel {
   disconnect(): Promise<void>;
   getChatMode(chatId: string): Promise<'group' | 'topic'>;
   getConnectionStatus(): { state: 'connected'; reconnectAttempts: number };
-  send(chatId: string, content: unknown, options?: unknown): Promise<void>;
-  stream(chatId: string, input: unknown, options?: unknown): Promise<void>;
+  send: ReturnType<typeof vi.fn>;
+  stream: ReturnType<typeof vi.fn>;
 }
 
 const cleanups: Array<() => Promise<void>> = [];
@@ -67,6 +68,7 @@ const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
   sdkMock.channel = undefined;
   sdkMock.createLarkChannel.mockClear();
+  await closeLogger();
   await Promise.all(cleanups.splice(0).map((cleanup) => cleanup()));
 });
 
@@ -81,6 +83,52 @@ describe('bot identity injection into the agent adapter', () => {
 });
 
 describe('sender identity in bridge_context', () => {
+  it('records the documented intake entry fields for an incoming message', async () => {
+    const h = await createHarness();
+    const logsDir = join(h.tmp.profile, 'logs');
+    configureLogger({
+      logsDir,
+      now: () => new Date('2026-07-23T00:00:00.000Z'),
+    });
+    await startTestBridge(h);
+
+    await h.channel.handlers.message?.(
+      message({
+        messageId: 'om_intake_contract',
+        content: '@Bridge 帮我检查日志契约',
+      }),
+    );
+    await flushLogger();
+
+    const intakeEntry = (await readLogLines(logsDir)).find(
+      (entry) => entry.phase === 'intake' && entry.event === 'enter',
+    );
+    expect(intakeEntry).toMatchObject({
+      phase: 'intake',
+      event: 'enter',
+      chatId: 'oc_chat',
+      sender: 'ou_user',
+    });
+  });
+
+  it('silently drops a mentioned group sender outside the group allowlist', async () => {
+    const h = await createHarness();
+    await startTestBridge(h);
+
+    await h.channel.handlers.message?.(
+      message({
+        messageId: 'om_denied_group_sender',
+        senderId: 'ou_unlisted',
+        content: '@Bridge 这条消息不应触发任何响应',
+      }),
+    );
+    await waitFor(() => h.agent.runOptions.length === 0 && h.channel.send.mock.calls.length === 0, 800);
+
+    expect(h.agent.runOptions).toEqual([]);
+    expect(h.channel.send).not.toHaveBeenCalled();
+    expect(h.channel.stream).not.toHaveBeenCalled();
+  });
+
   it('marks a bot sender via raw sender_type and injects botOpenId and mentions', async () => {
     const h = await createHarness();
     await startTestBridge(h);
@@ -247,7 +295,9 @@ async function createHarness(): Promise<{
       },
     },
     access: {
-      allowedChats: ['oc_chat'],
+      groupAllowedUsers: {
+        oc_chat: ['ou_user', 'ou_human', 'ou_hermes'],
+      },
       allowedUsers: ['ou_user'],
     },
   });
@@ -337,12 +387,12 @@ function createFakeLarkChannel(): FakeLarkChannel & { handlers: MessageHandlerMa
     getConnectionStatus() {
       return { state: 'connected', reconnectAttempts: 0 };
     },
-    async send() {},
-    async stream(_chatId, input) {
+    send: vi.fn(async () => {}),
+    stream: vi.fn(async (_chatId, input) => {
       if (isMarkdownStreamInput(input)) {
         await input.markdown({ setContent: async () => {} });
       }
-    },
+    }),
   };
 }
 
@@ -418,4 +468,13 @@ interface MarkdownStreamInput {
 
 function isMarkdownStreamInput(input: unknown): input is MarkdownStreamInput {
   return Boolean(input && typeof input === 'object' && 'markdown' in input);
+}
+
+async function readLogLines(logsDir: string): Promise<Array<Record<string, unknown>>> {
+  const text = await readFile(join(logsDir, 'bridge-20260723.jsonl'), 'utf8');
+  return text
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
 }

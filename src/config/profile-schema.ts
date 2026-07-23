@@ -19,7 +19,8 @@ export type { AccessMode, PermissionConfig, PermissionSource };
 
 export interface ProfileAccess {
   allowedUsers: string[];
-  allowedChats: string[];
+  groupAllowedUsers: Record<string, string[]>;
+  groupDenyUsers: Record<string, string[]>;
   admins: string[];
   requireMentionInGroup: boolean;
   /**
@@ -67,11 +68,13 @@ export type LarkCliIdentityPreset = 'bot-only' | 'user-default';
 /**
  * Deployment mode — a single switch that binds two behaviors together
  * (see the "团队版 Bot 权限调整" spec):
- *   - `personal` (default, the status quo): only owner + allowlisted
- *     users/chats can use the bot; the CLI may carry owner's personal (user)
- *     authorization per {@link LarkCliConfig.identityPreset}.
- *   - `team`: anyone can @-use the bot (no allowlist gating), and the CLI is
- *     forced to `bot-only` so it never carries owner's personal authorization.
+ *   - `personal` (default, the status quo): direct messages require the owner
+ *     or an allowed user; group messages require groupAllowedUsers unless
+ *     groupDenyUsers rejects the sender. The CLI may carry owner's personal
+ *     (user) authorization per {@link LarkCliConfig.identityPreset}.
+ *   - `team`: direct messages are open, while group messages still use
+ *     groupAllowedUsers/groupDenyUsers. The CLI is forced to `bot-only` so it
+ *     never carries owner's personal authorization.
  *
  * The two behaviors are intentionally bound to one switch, not two configs.
  * Admin/sensitive commands stay owner/admin-gated in both modes.
@@ -293,7 +296,8 @@ function normalizeAccess(
   const chatRequireMention = normalizeChatMentionMap(access?.chatRequireMention);
   return {
     allowedUsers: stringArray(access?.allowedUsers),
-    allowedChats: stringArray(access?.allowedChats),
+    groupAllowedUsers: groupSenderMap(access?.groupAllowedUsers),
+    groupDenyUsers: groupSenderMap(access?.groupDenyUsers),
     admins: stringArray(access?.admins),
     requireMentionInGroup: access?.requireMentionInGroup ?? legacyRequireMentionInGroup ?? true,
     // Omit when empty so configs without per-chat overrides stay clean.
@@ -390,6 +394,30 @@ function isLarkCliUserImportStatus(value: unknown): value is LarkCliUserImportSt
 function stringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value.filter((item): item is string => typeof item === 'string');
+}
+
+function groupSenderMap(value: unknown): Record<string, string[]> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+
+  const entries = new Map<string, Set<string>>();
+  for (const [chatId, senders] of Object.entries(value)) {
+    const normalizedChatId = chatId.trim();
+    if (!normalizedChatId || !Array.isArray(senders)) continue;
+
+    const normalizedSenders = senders
+      .filter((sender): sender is string => typeof sender === 'string')
+      .map((sender) => sender.trim())
+      .filter(Boolean);
+    if (normalizedSenders.length === 0) continue;
+    const mergedSenders = entries.get(normalizedChatId) ?? new Set<string>();
+    for (const sender of normalizedSenders) {
+      mergedSenders.add(sender);
+    }
+    entries.set(normalizedChatId, mergedSenders);
+  }
+  return Object.fromEntries(
+    [...entries].map(([chatId, senders]) => [chatId, [...senders]]),
+  );
 }
 
 function numberOr(value: unknown, fallback: number): number {

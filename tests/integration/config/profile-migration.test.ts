@@ -54,7 +54,8 @@ describe('profile v2 migration', () => {
         requireMentionInGroup: false,
         access: {
           allowedUsers: ['ou_allowed'],
-          allowedChats: ['oc_allowed'],
+          groupAllowedUsers: { oc_allowed: ['ou_allowed', 'ou_bot'] },
+          groupDenyUsers: { oc_allowed: ['ou_blocked'] },
           admins: ['ou_admin'],
         },
       },
@@ -84,7 +85,8 @@ describe('profile v2 migration', () => {
     expect(next.secrets).toEqual(legacyConfig.secrets);
     expect(next.profiles.claude?.access).toEqual({
       allowedUsers: ['ou_allowed'],
-      allowedChats: ['oc_allowed'],
+      groupAllowedUsers: { oc_allowed: ['ou_allowed', 'ou_bot'] },
+      groupDenyUsers: { oc_allowed: ['ou_blocked'] },
       admins: ['ou_admin'],
       requireMentionInGroup: false,
     });

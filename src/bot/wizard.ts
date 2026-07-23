@@ -91,8 +91,8 @@ export async function runRegistrationWizard(): Promise<AppConfig> {
   // runtime from the Lark application API (`application/v6/applications`),
   // and the QR scanner is naturally the app's owner, so they'll get
   // unconditional bypass on the very first message — no config edit needed.
-  // `allowedUsers` / `allowedChats` / `admins` stay empty (= nobody outside
-  // the creator) until the operator tightens via `/config`.
+  // `allowedUsers` / `groupAllowedUsers` / `groupDenyUsers` / `admins` stay
+  // empty (= nobody outside the creator) until the operator configures access.
   if (operatorOpenId) {
     console.log(`  Creator: ${operatorOpenId} (Lark 应用 owner，自动豁免所有访问控制)`);
   } else {

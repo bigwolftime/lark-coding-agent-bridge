@@ -148,9 +148,7 @@ lark-channel-bridge profile export <name> --include-secrets --yes
 | `/config` | 调整展示偏好、访问控制和 lark-cli 身份策略 |
 | `/invite user @某人` | 允许用户私聊使用 bot |
 | `/invite admin @某人` | 添加访问控制管理员 |
-| `/invite group` | 允许当前群使用 bot |
-| `/invite all group` | 允许 bot 所在的所有群使用 |
-| `/remove user @某人`, `/remove admin @某人`, `/remove group` | 移除访问控制条目 |
+| `/remove user @某人`, `/remove admin @某人` | 移除私聊用户或访问控制管理员 |
 | `/stop` | 停止当前 run，也可点卡片停止按钮 |
 | `/timeout [N\|off\|default]` | 设置或清除当前会话的 idle watchdog |
 | `/ps` | 列出本机 bridge 进程 |
@@ -238,41 +236,22 @@ bridge 会检查所选目录存在、是目录，并且不是 `/`、Home 根、�
 
 ## 访问控制
 
-**聊天访问默认是私有的：开箱即用时，只有"你"能在私聊和群聊里用这个 bot。** 这里的"你" = 创建 / 拥有这个飞书应用的人（也就是扫码把 bot 建起来的那位）。bot 会自动从飞书查出谁是应用 owner，所以**一个人用聊天入口完全不用配置**——你私聊它、在任意群里 @它都正常工作，其他人的聊天消息会被静默忽略（bot 不会回"你没权限"，免得暴露自己的存在）。云文档评论按文档权限生效，见下文。
+聊天访问默认是私有的。bridge 会自动识别应用 owner；owner 无需额外配置，就能在私聊和群聊中使用 bot。`allowedUsers` 只控制私聊，不会授予群聊权限。admin 同样可以私聊，并可通过 `/config`、`/invite` 和 `/remove` 管理访问控制。
 
-想让别的同事或某些群也能用，就把他们加进下面三类名单：
+`/invite` 和 `/remove` 只管理私聊用户与 admin，即 `/invite user`、`/remove user`、`/invite admin` 和 `/remove admin`。只有 owner 和 admin 能执行这些命令。群聊访问目前没有飞书 / Lark 内的管理入口，只能编辑对应 profile 的配置文件。
 
-| 名单 | 控制谁 | 加入 | 移除 |
-|------|--------|------|------|
-| **允许私聊的用户** | 谁可以私聊 bot | `/invite user @某人` | `/remove user @某人` |
-| **响应的群** | bot 在哪些群里对**群内所有人**响应 | `/invite group`（当前群）/ `/invite all group`（bot 所在的全部群） | `/remove group`（当前群） |
-| **管理员** | 谁能改设置、并能在任意群用 bot | `/invite admin @某人` | `/remove admin @某人` |
+群聊访问使用两个 map：
 
-> `/invite`、`/remove` 这些命令只有**你（创建者）和管理员**能发。命令里 @ 的是**对方**（不是 @ bot），bot 会自动把 @ 解析成对应的人，你不用手动去找 ID。
+- `groupAllowedUsers`：按群 `chat_id` 映射到该群允许的人类或机器人 sender `open_id` 数组。
+- `groupDenyUsers`：按群 `chat_id` 映射到该群拒绝的人类或机器人 sender `open_id` 数组。
 
-### 两种"畅通无阻"的身份
+人类和机器人发送者使用相同的事件 `senderId` / `open_id` 匹配。owner 和 admin 会绕过两个群 map。对其他 sender，先检查当前 chat 的 deny map，因此冲突时 **deny 优先**；随后 sender 必须出现在当前 chat 的 allow map 中。如果当前群**没有 allow 条目**，或 sender 不在 allow 数组中，就会拒绝。team 模式只放开私聊；群消息仍须经过两个群 map 检查。
 
-- **你（创建者）**：不受任何名单限制——私聊、任意群、所有命令都能用，而且**永远锁不死自己**：哪怕名单配乱了，回到 bot 私聊发 `/config` 总能进来。在飞书后台把应用 owner 转给别人后，bot 也会自动跟着切换。
-- **管理员**：能私聊、能用 `/config` 等管理命令，而且**不受"响应的群"名单限制**——无论群在不在名单里，bot 都会回他们。适合给一起维护 bot 的同事。
+`requireMentionInGroup` 是独立条件：开启后，已授权的群 sender 还必须提及 bot。未授权消息始终静默忽略，包括 `@bot` 的消息。云文档评论按文档权限生效，见下文。
 
-### 几种常见配置
+### 在 profile 配置中编辑群聊访问
 
-- **只给自己用** → 什么都不用做，默认就是。
-- **让某个同事能私聊 bot** → `/invite user @他`
-- **让某个工作群里所有人都能用** → 在那个群里发 `/invite group`
-- **第一次配，想把 bot 已经在的群一次性全开放** → 发 `/invite all group` 一键拉取 bot 所在的全部群加入名单，之后再用 `/remove group` 删掉不想要的
-- **再拉个人一起当管理员** → `/invite admin @他`
-
-### 还需要知道的
-
-- 改完**下一条消息**就生效，不用重启。
-- **群里默认要先 @bot 才会回**（私聊不用 @）。这是另一个独立开关（`/config` →"群里需要 @ bot"），和上面的名单是两回事。
-- 陌生人发消息一律静默丢弃，不会有任何回复。唯一的例外：有人在一个还没开放的群里 @bot，bot 会回一句友好提示，告诉他可以让管理员发 `/invite group` 开放这个群。
-- 云文档评论按文档权限生效：能在支持的文档里评论并 @bot 的人可以触发回复。
-
-### 高级：直接改配置文件
-
-不想在飞书里点的话，`/invite`、`/config` 背后写的是 `~/.lark-channel/config.json` 中对应 profile 的 `access` 字段。空白名单表示这个名单没人，不表示所有人都能用。下面只是 profile 里的字段片段，不要整段覆盖 `config.json`：
+群 map 目前只能通过编辑 `~/.lark-channel/config.json` 中对应 profile 的 `access` 字段修改。下面只是 profile 里的字段片段，不要整段覆盖 `config.json`：
 
 ```json
 {
@@ -281,9 +260,14 @@ bridge 会检查所选目录存在、是目录，并且不是 `/`、Home 根、�
     "claude": {
       "agentKind": "claude",
       "access": {
-        "allowedUsers": ["ou_xxxxxxxxxxxxx"],
-        "allowedChats": ["oc_xxxxxxxxxxxxx"],
-        "admins": ["ou_xxxxxxxxxxxxx"],
+        "allowedUsers": ["ou_dm_user"],
+        "admins": ["ou_admin"],
+        "groupAllowedUsers": {
+          "oc_group_a": ["ou_human_1", "ou_bot_1"]
+        },
+        "groupDenyUsers": {
+          "oc_group_a": ["ou_blocked"]
+        },
         "requireMentionInGroup": true
       }
     }
@@ -291,13 +275,15 @@ bridge 会检查所选目录存在、是目录，并且不是 `/`、Home 根、�
 }
 ```
 
-`allowedUsers` / `admins` 填用户 `open_id`，`allowedChats` 填群 `chat_id`。手动找 ID 最简单的办法：让对方给 bot 发条消息（群里就 @ 它一下），然后看当前 profile 的日志：
+每个群 map 的 key 是群 `chat_id`，value 是 sender `open_id` 数组。机器人条目也填写其消息事件中的 `senderId` / `open_id`。不要把 bridge bot 自身加入 `groupAllowedUsers`，否则自身消息可能形成消息循环。
+
+查找 ID 时，让目标人类或机器人 sender 发一条消息，再查看当前 profile 的日志：
 
 ```bash
-grep '"event":"enter"' ~/.lark-channel/profiles/<profile>/logs/bridge-$(date +%Y%m%d).jsonl | tail -5
+grep -F '"phase":"intake"' ~/.lark-channel/profiles/<profile>/logs/bridge-$(date +%Y%m%d).jsonl | grep -F '"event":"enter"' | tail -5
 ```
 
-每行都带 `chatId`（群 / 私聊 ID）和 `senderId`（用户 `open_id`）。手改完后**重启 bridge**，或在允许的 admin 上下文里发 `/reconnect` 让它生效。日常调整还是 `/invite` / `/config` 更省事，直接改文件主要用于部署脚本预填。
+每条匹配到的 intake entry 都带 `chatId`（群 / 私聊 ID）和 `sender`（人类或机器人 sender 的 `open_id`）。手改完后**重启 bridge**，或在允许的 admin 上下文里发 `/reconnect` 让它生效。`/invite` 和 `/remove` 仍可用于管理私聊用户与 admin，但不会修改两个群 map。
 
 ## 云文档评论
 

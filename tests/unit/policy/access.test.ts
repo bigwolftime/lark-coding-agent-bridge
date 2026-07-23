@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  accessPolicyDigest,
   canRunAdminCommand,
   canUseDm,
   canUseGroup,
@@ -74,22 +73,84 @@ describe('access policy', () => {
     expect(canUseDm(byAdmin, ownerControls, 'ou_other').ok).toBe(true);
   });
 
-  it('fails closed for groups unless owner, admin, or allowedChats includes the chat', () => {
-    const closed = profileWithAccess();
-    expect(canUseGroup(closed, ownerControls, 'chat_allowed', 'ou_other').ok).toBe(false);
+  it('allows a group sender listed for that group, including a bot open_id', () => {
+    const profile = profileWithAccess({
+      groupAllowedUsers: { chat_allowed: ['ou_bot_sender'] },
+    });
 
-    const allowed = profileWithAccess({ allowedChats: ['chat_allowed'] });
-    expect(canUseGroup(allowed, ownerControls, 'chat_allowed', 'ou_other').ok).toBe(true);
-    expect(canUseGroup(allowed, ownerControls, 'chat_other', 'ou_other').ok).toBe(false);
+    expect(canUseGroup(profile, ownerControls, 'chat_allowed', 'ou_bot_sender')).toEqual({
+      ok: true,
+      reason: 'allowed-group-user',
+    });
   });
 
-  it('lets admins use groups before the chat is allowlisted', () => {
-    const profile = profileWithAccess({ admins: ['ou_admin'] });
+  it('denies a group sender when the group or sender is not allowlisted', () => {
+    const profile = profileWithAccess({
+      groupAllowedUsers: { chat_allowed: ['ou_allowed'] },
+    });
 
-    expect(canUseGroup(profile, ownerControls, 'chat_new', 'ou_admin')).toEqual({
+    expect(canUseGroup(profile, ownerControls, 'chat_missing', 'ou_allowed')).toEqual({
+      ok: false,
+      reason: 'denied-group-user',
+    });
+    expect(canUseGroup(profile, ownerControls, 'chat_allowed', 'ou_missing')).toEqual({
+      ok: false,
+      reason: 'denied-group-user',
+    });
+  });
+
+  it('isolates group allowlists by chat ID', () => {
+    const profile = profileWithAccess({
+      groupAllowedUsers: {
+        chat_one: ['ou_user_one'],
+        chat_two: ['ou_user_two'],
+      },
+    });
+
+    expect(canUseGroup(profile, ownerControls, 'chat_one', 'ou_user_one').ok).toBe(true);
+    expect(canUseGroup(profile, ownerControls, 'chat_two', 'ou_user_one')).toEqual({
+      ok: false,
+      reason: 'denied-group-user',
+    });
+  });
+
+  it('denies a group sender when they are in both the allowlist and denylist', () => {
+    const profile = profileWithAccess({
+      groupAllowedUsers: { chat_allowed: ['ou_denied'] },
+      groupDenyUsers: { chat_allowed: ['ou_denied'] },
+    });
+
+    expect(canUseGroup(profile, ownerControls, 'chat_allowed', 'ou_denied')).toEqual({
+      ok: false,
+      reason: 'denied-group-user',
+    });
+  });
+
+  it('lets owner and admins use groups even when denylisted', () => {
+    const profile = profileWithAccess({
+      admins: ['ou_admin'],
+      groupDenyUsers: { chat_denied: ['ou_owner', 'ou_admin'] },
+    });
+
+    expect(canUseGroup(profile, ownerControls, 'chat_denied', 'ou_owner')).toEqual({
+      ok: true,
+      reason: 'owner',
+    });
+    expect(canUseGroup(profile, ownerControls, 'chat_denied', 'ou_admin')).toEqual({
       ok: true,
       reason: 'allowed-admin',
     });
+  });
+
+  it('denies incomplete group identities before owner or admin bypasses', () => {
+    const personal = profileWithAccess({ admins: ['', '   '] });
+    const team = profileWithAccess({ admins: ['', '   '] }, 'team');
+    const denied = { ok: false, reason: 'denied-group-user' };
+
+    expect(canUseGroup(personal, ownerControls, '', 'ou_owner')).toEqual(denied);
+    expect(canUseGroup(team, ownerControls, '   ', 'ou_owner')).toEqual(denied);
+    expect(canUseGroup(personal, ownerControls, 'chat_valid', '')).toEqual(denied);
+    expect(canUseGroup(team, ownerControls, 'chat_valid', '   ')).toEqual(denied);
   });
 
   it('treats empty admins as zero admins while preserving owner admin access', () => {
@@ -102,17 +163,18 @@ describe('access policy', () => {
     expect(canRunAdminCommand(withAdmin, ownerControls, 'ou_admin').ok).toBe(true);
   });
 
-  it('opens usage to everyone in team mode without touching admin gating', () => {
+  it('opens DMs to everyone in team mode while denying unlisted group senders', () => {
     const team = profileWithAccess({}, 'team');
 
-    // Anyone can use DMs and groups — no allowlist needed.
+    // Team mode preserves its existing DM behavior.
     expect(canUseDm(team, ownerControls, 'ou_stranger')).toEqual({
       ok: true,
       reason: 'allowed-team',
     });
+    // Group senders remain scoped to the group allowlist in both modes.
     expect(canUseGroup(team, ownerControls, 'chat_random', 'ou_stranger')).toEqual({
-      ok: true,
-      reason: 'allowed-team',
+      ok: false,
+      reason: 'denied-group-user',
     });
 
     // Admin/sensitive commands are still owner/admin-gated.
@@ -123,21 +185,6 @@ describe('access policy', () => {
     expect(canRunAdminCommand(teamWithAdmin, ownerControls, 'ou_admin').ok).toBe(true);
   });
 
-  it('does not include runtime owner state in the access policy digest', () => {
-    const profile = profileWithAccess({
-      allowedUsers: ['ou_a'],
-      allowedChats: ['chat_a'],
-      admins: ['ou_admin'],
-    });
-
-    expect(accessPolicyDigest(profile.access)).toBe(accessPolicyDigest(profile.access));
-    expect(accessPolicyDigest(profile.access)).toBe(
-      accessPolicyDigest({
-        ...profile.access,
-        allowedUsers: ['ou_a'],
-      }),
-    );
-  });
 });
 
 describe('requireMentionForChat', () => {

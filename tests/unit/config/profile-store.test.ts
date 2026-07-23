@@ -50,7 +50,8 @@ describe('profile store canonical serialization', () => {
         },
         access: {
           allowedUsers: ['ou_user'],
-          allowedChats: ['oc_chat'],
+          groupAllowedUsers: { oc_chat: ['ou_user', 'ou_bot'] },
+          groupDenyUsers: { oc_chat: ['ou_blocked'] },
           admins: ['ou_admin'],
           requireMentionInGroup: false,
         },

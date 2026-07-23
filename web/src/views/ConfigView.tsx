@@ -36,7 +36,7 @@ export function ConfigView({ profile }: { profile: string }) {
   const [cfg, setCfg] = useState<ConfigData | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // chat_id → display name, for the allowed-chats list. Seeded from the bot's
+  // chat_id → display name, for the mention-override list. Seeded from the bot's
   // known chats and topped up with names captured when adding from the picker.
   const [chatNames, setChatNames] = useState<Record<string, string>>({});
 
@@ -92,7 +92,7 @@ export function ConfigView({ profile }: { profile: string }) {
     }
   }
 
-  async function access(action: "add" | "remove", kind: "user" | "admin" | "chat", id: string) {
+  async function access(action: "add" | "remove", kind: "user" | "admin", id: string) {
     if (!id.trim()) return;
     try {
       const acc = await apiPost<ConfigData["access"]>(
@@ -128,7 +128,7 @@ export function ConfigView({ profile }: { profile: string }) {
           </Badge>
         </CardHeader>
         <CardContent className="space-y-3">
-          <Field label="个人版 / 团队版" hint="团队版：任何人 @ 即可使用（不做白名单）；CLI 强制只用应用身份。管理命令仍限 owner/管理员。">
+          <Field label="个人版 / 团队版" hint="团队版：私聊对所有人开放；群聊仍按配置文件中的 groupAllowedUsers/groupDenyUsers 校验。CLI 强制只用应用身份，管理命令仍限 owner/管理员。">
             <SelectRow value={cfg.mode} onChange={(v) => set("mode", v as ConfigData["mode"])}
               options={[["personal", "个人版（默认）"], ["team", "团队版"]]} />
           </Field>
@@ -163,7 +163,7 @@ export function ConfigView({ profile }: { profile: string }) {
             </Field>
           </div>
           <ToggleRow label="群里需要 @ bot（全局默认）"
-            hint="关闭后群里任何消息都会触发（需 im:message.group_msg 权限）。可在下方「允许响应的群」为单个群单独设置，优先级高于此项。"
+            hint="关闭后群里无需 @ 即可触发（需 im:message.group_msg 权限且发送者通过群访问校验）。可在下方为单个群设置覆盖。"
             checked={cfg.requireMentionInGroup} onChange={(v) => set("requireMentionInGroup", v)} />
         </CardContent>
       </Card>
@@ -186,22 +186,23 @@ export function ConfigView({ profile }: { profile: string }) {
         <CardHeader><CardTitle>访问控制</CardTitle></CardHeader>
         <CardContent className="space-y-4">
           {team && (
-            <p className="text-xs text-primary">团队版下访问控制不生效（任何人可用）；以下配置保留，切回个人版后恢复。</p>
+            <p className="text-xs text-primary">团队版下私聊对所有人开放；群聊仍受配置文件中的群发送者白名单/黑名单限制。</p>
           )}
-          <AccessList label="允许私聊的用户（open_id）" placeholder="ou_..." ids={cfg.access.allowedUsers}
-            onAdd={(id) => access("add", "user", id)} onRemove={(id) => access("remove", "user", id)} />
+          {!team && (
+            <AccessList label="允许私聊的用户（open_id）" placeholder="ou_..." ids={cfg.access.allowedUsers}
+              onAdd={(id) => access("add", "user", id)} onRemove={(id) => access("remove", "user", id)} />
+          )}
           <Separator />
-          <AllowedChats
+          <ChatMentionOverrides
             profile={profile}
-            ids={cfg.access.allowedChats}
             chatRequireMention={cfg.access.chatRequireMention}
             chatNames={chatNames}
             globalRequire={cfg.requireMentionInGroup}
             onAdd={(id, name) => {
-              void access("add", "chat", id);
+              void setMention(id, !cfg.requireMentionInGroup);
               if (name) setChatNames((m) => ({ ...m, [id]: name }));
             }}
-            onRemove={(id) => access("remove", "chat", id)}
+            onRemove={(id) => setMention(id, null)}
             onSetMention={setMention}
           />
           <Separator />
@@ -257,9 +258,8 @@ function SelectRow({ value, onChange, options }: {
   );
 }
 
-function AllowedChats({
+function ChatMentionOverrides({
   profile,
-  ids,
   chatRequireMention,
   chatNames,
   globalRequire,
@@ -268,7 +268,6 @@ function AllowedChats({
   onSetMention,
 }: {
   profile: string;
-  ids: string[];
   chatRequireMention: Record<string, boolean>;
   chatNames: Record<string, string>;
   globalRequire: boolean;
@@ -278,15 +277,15 @@ function AllowedChats({
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [draft, setDraft] = useState("");
+  const ids = Object.keys(chatRequireMention);
 
   return (
     <div className="space-y-2">
-      <Label>允许响应的群（{ids.length}）</Label>
+      <Label>单群 @ 覆盖（{ids.length}）</Label>
       <div className="divide-y rounded-md border">
         {ids.length === 0 && <p className="px-3 py-2 text-xs text-muted-foreground">（暂无）</p>}
         {ids.map((id) => {
-          const override = chatRequireMention[id];
-          const value = override === undefined ? "global" : override ? "on" : "off";
+          const value = chatRequireMention[id] ? "on" : "off";
           return (
             <div key={id} className="flex items-center gap-2 px-3 py-2">
               <div className="min-w-0 flex-1">
@@ -295,11 +294,10 @@ function AllowedChats({
               </div>
               <Select
                 value={value}
-                onValueChange={(v) => onSetMention(id, v === "global" ? null : v === "on")}
+                onValueChange={(v) => onSetMention(id, v === "on")}
               >
                 <SelectTrigger className="h-8 w-[150px]"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="global">@：跟随全局（{globalRequire ? "需@" : "无需@"}）</SelectItem>
                   <SelectItem value="on">需要 @</SelectItem>
                   <SelectItem value="off">无需 @</SelectItem>
                 </SelectContent>
@@ -315,7 +313,7 @@ function AllowedChats({
         <Button variant="outline" onClick={() => { onAdd(draft); setDraft(""); }}>添加</Button>
       </div>
       <p className="text-xs text-muted-foreground">
-        每个群可单独设置是否需要 @ bot；「跟随全局」时用上面「回复与运行」里的默认值。
+        这里只控制是否需要 @ bot，不授予群访问权限。新增群默认设为与全局相反；移除后恢复全局值（当前{globalRequire ? "需要 @" : "无需 @"}）。
       </p>
       <GroupPicker
         profile={profile}
@@ -341,7 +339,7 @@ function GroupPicker({ profile, open, onOpenChange, added, onPick }: {
         <DialogHeader>
           <DialogTitle>选择群</DialogTitle>
           <DialogDescription>
-            从 bot 已加入的群里选，或用你的飞书身份从「我的群」里选（可把 bot 拉进去）。
+            选择要单独覆盖 @ 设置的群；这不会授予任何发送者访问权限。也可用你的飞书身份把 bot 拉进群。
           </DialogDescription>
         </DialogHeader>
         <Tabs defaultValue="bot" className="min-w-0">
@@ -522,7 +520,7 @@ function MyChatsPane({ profile, open, added, onPick }: {
         toast.success("已申请，等待群主/管理员通过");
       } else {
         onPick(id, chats?.find((c) => c.id === id)?.name);
-        toast.success("已把 bot 拉进群，并加入允许列表");
+        toast.success("已把 bot 拉进群，并添加单群 @ 覆盖");
       }
       // Mark it in-place so the row updates without losing the current page.
       setChats((prev) => prev?.map((c) => (c.id === id ? { ...c, botInIt: true } : c)) ?? prev);
@@ -611,7 +609,7 @@ function MyChatsPane({ profile, open, added, onPick }: {
         </Button>
       )}
       <p className="text-xs text-muted-foreground">
-        bot 不在的群，先「拉bot进群」它才能在群里响应；「添加」只是把群加入允许列表。
+        bot 不在的群，先「拉bot进群」它才能接收消息；「添加」只创建单群 @ 覆盖，不授予访问权限。
       </p>
     </div>
   );

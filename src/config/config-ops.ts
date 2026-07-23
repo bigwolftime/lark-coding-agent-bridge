@@ -85,7 +85,8 @@ export async function saveAccessConfig(
           ...(state.cfg.preferences ?? {}),
           access: {
             allowedUsers: access.allowedUsers,
-            allowedChats: access.allowedChats,
+            groupAllowedUsers: access.groupAllowedUsers,
+            groupDenyUsers: access.groupDenyUsers,
             admins: access.admins,
             ...(access.chatRequireMention && Object.keys(access.chatRequireMention).length > 0
               ? { chatRequireMention: access.chatRequireMention }
@@ -109,7 +110,8 @@ export async function saveAccessConfig(
       state.cfg = runtimeProfileConfig(root, state.profile);
       log.info('config-ops', 'access-mutated', {
         allowedUsers: access.allowedUsers.length,
-        allowedChats: access.allowedChats.length,
+        groupAllowedUsers: Object.keys(access.groupAllowedUsers).length,
+        groupDenyUsers: Object.keys(access.groupDenyUsers).length,
         admins: access.admins.length,
       });
       return access;

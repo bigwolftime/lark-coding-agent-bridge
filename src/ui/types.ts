@@ -1,5 +1,4 @@
 import type { LarkChannel } from '@larksuite/channel';
-import type { KnownChat } from '../bot/lark-info';
 import type { MutableProfileState } from '../config/config-ops';
 import type { Controls } from '../commands';
 import type { ManagedStatus } from '../runtime/supervisor';
@@ -12,7 +11,6 @@ import type { ManagedStatus } from '../runtime/supervisor';
  */
 export interface UiRuntime extends MutableProfileState {
   botOwnerId?: string;
-  knownChats?: KnownChat[];
   refreshOwner(channel?: LarkChannel): Promise<void>;
   restart(opts?: { wait?: boolean }): Promise<void>;
 }

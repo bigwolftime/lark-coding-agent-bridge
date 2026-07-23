@@ -421,7 +421,9 @@ async function createHarness(options: {
       },
     },
     access: {
-      allowedChats: ['oc_topic_chat'],
+      groupAllowedUsers: {
+        oc_topic_chat: ['ou_user'],
+      },
       allowedUsers: ['ou_user'],
     },
   });

@@ -131,6 +131,13 @@ describe('ui server (supervisor-backed)', () => {
     const config = await json(await get('/api/config', handle.token));
     expect(config.mode).toBe('personal');
     expect(config.live).toBe(true);
+    expect(Object.keys(config.access).sort()).toEqual([
+      'admins',
+      'allowedUsers',
+      'chatRequireMention',
+    ]);
+    expect(config.access).not.toHaveProperty('groupAllowedUsers');
+    expect(config.access).not.toHaveProperty('groupDenyUsers');
   });
 
   it('applies a config change live to an online profile and persists it', async () => {
@@ -165,14 +172,13 @@ describe('ui server (supervisor-backed)', () => {
     expect(removed.allowedUsers).not.toContain('ou_alice');
   });
 
-  it('sets and clears a per-chat @-mention override, and drops it when the chat is removed', async () => {
-    await json(await post('/api/access', handle.token, { action: 'add', kind: 'chat', id: 'oc_grp' }));
-
+  it('sets and clears a per-chat @-mention override without granting chat access', async () => {
     // Set an override (respond to all — no @ needed).
     const set = await json(
       await post('/api/access', handle.token, { action: 'set-mention', kind: 'chat', id: 'oc_grp', requireMention: false }),
     );
     expect(set.chatRequireMention).toEqual({ oc_grp: false });
+    expect(Object.keys(set).sort()).toEqual(['admins', 'allowedUsers', 'chatRequireMention']);
     expect(online.get('claude').profileConfig.access.chatRequireMention).toEqual({ oc_grp: false });
 
     // Clear it (follow global) with null.
@@ -180,14 +186,30 @@ describe('ui server (supervisor-backed)', () => {
       await post('/api/access', handle.token, { action: 'set-mention', kind: 'chat', id: 'oc_grp', requireMention: null }),
     );
     expect(cleared.chatRequireMention).toEqual({});
+  });
 
-    // Re-set then remove the chat → override is dropped too.
-    await json(await post('/api/access', handle.token, { action: 'set-mention', kind: 'chat', id: 'oc_grp', requireMention: true }));
-    const afterRemove = await json(
-      await post('/api/access', handle.token, { action: 'remove', kind: 'chat', id: 'oc_grp' }),
-    );
-    expect(afterRemove.allowedChats).not.toContain('oc_grp');
-    expect(afterRemove.chatRequireMention).toEqual({});
+  it('rejects chat add/remove mutations and non-chat mention mutations', async () => {
+    expect((await post('/api/access', handle.token, { action: 'add', kind: 'chat', id: 'oc_grp' })).status).toBe(400);
+    expect((await post('/api/access', handle.token, { action: 'remove', kind: 'chat', id: 'oc_grp' })).status).toBe(400);
+    expect((await post('/api/access', handle.token, {
+      action: 'set-mention', kind: 'user', id: 'oc_grp', requireMention: false,
+    })).status).toBe(400);
+  });
+
+  it('preserves config-only group sender maps when mutating web-managed access', async () => {
+    const root = (await loadRootConfig(configPath))!;
+    root.profiles.claude!.access.groupAllowedUsers = { oc_allowed: ['ou_human', 'ou_bot'] };
+    root.profiles.claude!.access.groupDenyUsers = { oc_allowed: ['ou_blocked'] };
+    await saveRootConfig(root, configPath);
+    online.set('claude', await makeControls('claude'));
+
+    await json(await post('/api/access', handle.token, { action: 'add', kind: 'admin', id: 'ou_admin' }));
+
+    const saved = (await loadRootConfig(configPath))!;
+    expect(saved.profiles.claude!.access.groupAllowedUsers).toEqual({
+      oc_allowed: ['ou_human', 'ou_bot'],
+    });
+    expect(saved.profiles.claude!.access.groupDenyUsers).toEqual({ oc_allowed: ['ou_blocked'] });
   });
 
   it('lists profiles with online flag from the supervisor', async () => {

@@ -47,10 +47,19 @@ export function policyFingerprint(input: FingerprintInputV2): string {
 export function accessPolicyDigest(access: ProfileConfig['access']): string {
   return digestCanonical({
     admins: [...access.admins].sort(),
-    allowedChats: [...access.allowedChats].sort(),
     allowedUsers: [...access.allowedUsers].sort(),
+    groupAllowedUsers: sortedAccessMap(access.groupAllowedUsers),
+    groupDenyUsers: sortedAccessMap(access.groupDenyUsers),
     requireMentionInGroup: access.requireMentionInGroup,
   });
+}
+
+function sortedAccessMap(map: Record<string, string[]>): Record<string, string[]> {
+  return Object.fromEntries(
+    Object.entries(map)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([chatId, senderIds]) => [chatId, [...senderIds].sort()]),
+  );
 }
 
 export function resourceScopeDigest(input: ResourceScopeDigestInput): string {
