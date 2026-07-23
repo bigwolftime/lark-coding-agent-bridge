@@ -196,6 +196,7 @@ export async function fetchTopicContext(
           container_id: threadId,
           sort_type: 'ByCreateTimeAsc',
           page_size: 50,
+          card_msg_content_type: 'user_card_content',
           ...(pageToken ? { page_token: pageToken } : {}),
         },
       });

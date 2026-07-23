@@ -179,32 +179,55 @@ describe('topic message quote handling', () => {
     expect(h.channel.streams[0]?.options).not.toMatchObject({ replyInThread: true });
   });
 
-  it('pulls in the topic upstream messages when first engaged in a topic', async () => {
+  it('pulls CardKit 2.0 topic messages with user card content on every page', async () => {
     // The topic root holds the real question and never @-mentioned the bot; the
     // bot only gets pulled in by a later "@Bridge 看下这个" reply. On a fresh
     // topic session we fetch the thread so the agent isn't blind to the root.
     const h = await createHarness({
       chatMode: 'topic',
-      threadMessages: [
-        {
-          message_id: 'om_topic_root',
-          msg_type: 'text',
-          body: { content: JSON.stringify({ text: 'the real upstream question' }) },
-          sender: { id: 'ou_asker', sender_type: 'user' },
-          create_time: '1760000000000',
-          thread_id: 'omt_topic',
-        },
-        {
-          // the triggering message itself — must be excluded, not echoed back
-          message_id: 'om_at_in_topic',
-          msg_type: 'text',
-          body: { content: JSON.stringify({ text: '@Bridge 看下这个' }) },
-          sender: { id: 'ou_user', sender_type: 'user' },
-          create_time: '1760000001000',
-          thread_id: 'omt_topic',
-        },
-      ],
     });
+    h.channel.rawClient.im.v1.message.list
+      .mockResolvedValueOnce({
+        data: {
+          items: [
+            {
+              message_id: 'om_topic_root',
+              msg_type: 'interactive',
+              body: {
+                content: JSON.stringify({
+                  schema: '2.0',
+                  body: {
+                    elements: [
+                      { tag: 'markdown', content: '**Appcode:** crm-alert\n**报警 ID:** alert-42' },
+                    ],
+                  },
+                }),
+              },
+              sender: { id: 'ou_alert_bot', sender_type: 'app' },
+              create_time: '1760000000000',
+              thread_id: 'omt_topic',
+            },
+          ],
+          has_more: true,
+          page_token: 'next-page',
+        },
+      })
+      .mockResolvedValueOnce({
+        data: {
+          items: [
+            {
+              // the triggering message itself — must be excluded, not echoed back
+              message_id: 'om_at_in_topic',
+              msg_type: 'text',
+              body: { content: JSON.stringify({ text: '@Bridge 看下这个' }) },
+              sender: { id: 'ou_user', sender_type: 'user' },
+              create_time: '1760000001000',
+              thread_id: 'omt_topic',
+            },
+          ],
+          has_more: false,
+        },
+      });
 
     await startTestBridge(h);
 
@@ -219,20 +242,42 @@ describe('topic message quote handling', () => {
     );
     await waitFor(() => h.agent.runOptions.length === 1);
 
-    expect(h.channel.rawClient.im.v1.message.list).toHaveBeenCalledWith(
+    expect(h.channel.rawClient.im.v1.message.list).toHaveBeenNthCalledWith(
+      1,
       expect.objectContaining({
         params: expect.objectContaining({
           container_id_type: 'thread',
           container_id: 'omt_topic',
+          card_msg_content_type: 'user_card_content',
+        }),
+      }),
+    );
+    expect(h.channel.rawClient.im.v1.message.list).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        params: expect.objectContaining({
+          container_id_type: 'thread',
+          container_id: 'omt_topic',
+          card_msg_content_type: 'user_card_content',
+          page_token: 'next-page',
         }),
       }),
     );
     const prompt = h.agent.runOptions[0]?.prompt ?? '';
     expect(prompt).toContain('<topic_context>');
-    expect(prompt).toContain('the real upstream question');
+    const topicBlock = prompt.slice(prompt.indexOf('<topic_context>'), prompt.indexOf('</topic_context>'));
+    // Topic context is JSON-serialized, so XML delimiters and the nested card
+    // JSON are escaped inside the message content string.
+    expect(topicBlock).toContain(String.raw`\u003cinteractive_card\u003e`);
+    expect(topicBlock).toContain(String.raw`\"schema\":\"2.0\"`);
+    expect(topicBlock).toContain(String.raw`\"body\"`);
+    expect(topicBlock).toContain(String.raw`\"elements\"`);
+    expect(topicBlock).toContain(String.raw`\"tag\":\"markdown\"`);
+    expect(topicBlock).toContain('crm-alert');
+    expect(topicBlock).toContain('alert-42');
+    expect(h.channel.fetchRawMessage).not.toHaveBeenCalled();
     // The triggering message is in the thread list too — it must be excluded so
     // it isn't duplicated inside topic_context.
-    const topicBlock = prompt.slice(prompt.indexOf('<topic_context>'), prompt.indexOf('</topic_context>'));
     expect(topicBlock).not.toContain('om_at_in_topic');
   });
 
