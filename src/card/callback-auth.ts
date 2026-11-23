@@ -93,6 +93,21 @@ export class CallbackAuth {
   }
 
   verify(token: string, expected: CallbackVerifyExpected): CallbackVerifyResult {
+    const result = this.check(token, expected);
+    if (!result.ok) return result;
+
+    const nonce = result.payload.n;
+    if (this.nonceStore.state(nonce) === 'revoked') {
+      return { ok: false, reason: 'nonce-revoked' };
+    }
+    if (!this.nonceStore.consume(nonce)) {
+      return { ok: false, reason: 'nonce-replay' };
+    }
+    return result;
+  }
+
+  // Business buttons track delivery and card updates separately in their durable state.
+  check(token: string, expected: CallbackVerifyExpected): CallbackVerifyResult {
     const parts = token.split('.');
     if (parts.length !== 4 || `${parts[0]}.${parts[1]}` !== PREFIX) {
       return { ok: false, reason: 'malformed' };
@@ -113,12 +128,6 @@ export class CallbackAuth {
       return { ok: false, reason: 'context-mismatch' };
     }
 
-    const nonceState = this.nonceStore.state(payload.n);
-    if (nonceState === 'revoked') return { ok: false, reason: 'nonce-revoked' };
-    if (nonceState === 'used') return { ok: false, reason: 'nonce-replay' };
-    if (!this.nonceStore.consume(payload.n)) {
-      return { ok: false, reason: 'nonce-replay' };
-    }
     return { ok: true, payload };
   }
 

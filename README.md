@@ -133,6 +133,33 @@ lark-channel-bridge profile export <name> --include-secrets --yes
 
 If a profile was created with the wrong agent kind, stop or unregister any matching background service first, then run `profile remove <name>` and recreate it with the intended `--agent`.
 
+### Signed card buttons
+
+In the Feishu or Lark developer console, choose long-connection delivery under **Events & Callbacks → Callback Configuration**, then add and publish `card.action.trigger`. The bot needs permission to send messages and create and update cards (`im:message:send_as_bot` and `cardkit:card:write`). Use the same running Bridge profile to send the card and receive clicks.
+
+In `~/.lark-channel/profiles/<profile>/card-webhooks.json`, map each action name to a business endpoint and a shared signing key file. Relative key paths resolve from the profile directory.
+
+```json
+{
+  "approveOrder": {
+    "url": "https://example.com/webhooks/approve-order",
+    "secretFile": "approve-order.key"
+  }
+}
+```
+
+Save your CardKit 2.0 card to `card.json`. A button’s callback behavior value is `{"bridge_webhook":"approveOrder","data":{"orderId":"1001"}}`. The [Chinese README](README.zh.md#带签名的卡片按钮) includes a complete card example.
+
+```bash
+lark-channel-bridge card send --profile codex --chat-id oc_xxx --operator ou_xxx --file card.json
+```
+
+The command returns JSON with the `message_id`. The button stays valid for 24 hours and can be triggered by the specified operator if they pass the profile’s access policy. For a topic reply, add `--reply-to om_xxx --reply-in-thread`.
+
+The endpoint receives a JSON POST with `id`, `action`, `chat_id`, `message_id`, `operator_open_id`, and `data`. Verify the `X-Bridge-Signature` header (`sha256=<hex>`) using HMAC-SHA256 with the shared key and the exact bytes of `X-Bridge-Timestamp` (Unix seconds), a dot, and the raw request body. Deduplicate by `Idempotency-Key` to handle retries after timeouts.
+
+On HTTP 2xx, Bridge disables the clicked button on the original card. The button stays active after a failed request. If only the card update fails, another click retries the update without sending another business request.
+
 ### Slash commands inside Feishu / Lark
 
 | Command | Effect |

@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import pkg from '../../package.json';
 import { formatAgentPreflightDiagnostic, getAgentPreflightDiagnostic } from '../agent/preflight';
+import { runCardSend } from './commands/card';
 import { runMigrate } from './commands/migrate';
 import { runKillCli, runPs } from './commands/ps';
 import {
@@ -70,6 +71,20 @@ program
   .action(async (opts: { config?: string; profile?: string; agent?: string }) => {
     await runMigrate(opts);
   });
+
+program
+  .command('card')
+  .description('Send CardKit 2.0 cards with signed business callbacks')
+  .command('send')
+  .description('Sign a card’s webhook buttons and send it as the profile bot')
+  .requiredOption('--chat-id <id>', 'destination chat ID (oc_...)')
+  .requiredOption('--operator <id>', 'open ID of the user allowed to click (ou_...)')
+  .requiredOption('--file <path>', 'CardKit 2.0 JSON file, or - for stdin')
+  .option('--profile <name>', 'profile name (defaults to the current bridge or active profile)')
+  .option('-c, --config <path>', 'path to the bridge configuration file')
+  .option('--reply-to <message-id>', 'send as a reply to this message in the destination chat')
+  .option('--reply-in-thread', 'reply inside the thread of --reply-to')
+  .action(runCardSend);
 
 const profile = program
   .command('profile')

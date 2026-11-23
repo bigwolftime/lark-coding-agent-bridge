@@ -59,36 +59,18 @@ export const BRIDGE_SYSTEM_PROMPT = `# lark-channel-bridge 运行约定
 
 无论哪种,块里都是卡的完整 JSON。解析它来理解结构(按钮、字段、布局)。**不要照抄 XML 标签到回复**——对用户不可见。
 
-## 发交互卡片（按钮、表单）的回调约定
+## 发带业务回调的交互卡片
 
-你想发一张可交互的卡片让用户点选时：
+当用户要求点击按钮调用已经配置的业务接口时，使用 CardKit 2.0，在按钮的 callback behavior 里把 value 写成
+\`{"bridge_webhook":"接口配置名","data":{"orderId":"1001"}}\`。通过
+\`lark-channel-bridge card send --chat-id <bridge_context.chatId> --operator <bridge_context.senderId> --file <card.json>\`
+发送。话题内可加 \`--reply-to <messageId> --reply-in-thread\`。
 
-1. 用 \`lark-cli\` 把卡发到 \`bridge_context.chat_id\`：
-   \`lark-cli im send-card --chat-id <chat_id> --card '<json>'\`
-2. 卡片用 CardKit 2.0 schema（\`schema: "2.0"\`）。
-3. **如果你希望用户点按钮后回调到你（让你在同一会话里继续处理）**：
-   - 按钮的 \`value\` 对象**必须**同时包含 \`__bridge_cb: true\` 和 \`bridge_token: "<signed token>"\`。
-   - \`bridge_token\` 必须由 bridge-aware 的 lark-cli 回调签名能力生成；不要猜测、伪造、复用或手写 token。
-   - 如果当前 lark-cli 不能生成 \`bridge_token\`，不要发送回调按钮。改成普通展示卡，让用户用文字回复选择。
-   - 同时可以塞任意其它字段，作为你需要在回调时记住的状态（比如 \`choice\`、\`ticket_id\`）。
-4. 用户点击后，bridge 会校验 \`bridge_token\`，然后把 payload（去掉 \`__bridge_cb\` 和 \`bridge_token\`）作为 \`[card-click] {...}\` 消息发回给你；你的 session 自动续上，能看到自己上轮发了什么卡。
-5. **如果只是展示卡（不需要回调）**，不要加 \`__bridge_cb\` 或 \`bridge_token\`，否则点击会被当成回调并要求签名。
+bridge 会自动签名，只接受指定用户的点击。业务接口返回 HTTP 2xx 后，bridge 会更新原卡片并置灰该按钮。
+接口配置名由当前 profile 的管理员提供。缺少配置名时，请向用户确认要使用的业务接口。
 
-示例 button：
-\`\`\`json
-{
-  "tag": "button",
-  "text": { "tag": "plain_text", "content": "方案 A" },
-  "behaviors": [{
-    "type": "callback",
-    "value": {
-      "__bridge_cb": true,
-      "bridge_token": "SIGNED_TOKEN_FROM_LARK_CLI",
-      "choice": "a"
-    }
-  }]
-}
-\`\`\`
+已有可信签名的 agent 回调按钮仍可使用 \`__bridge_cb\` 和 \`bridge_token\`。bridge 校验通过后会把业务字段作为
+\`[card-click]\` 消息送回会话。展示卡可直接用 lark-cli 发送。
 
 ## lark-cli 运行环境
 

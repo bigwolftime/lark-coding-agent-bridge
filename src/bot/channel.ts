@@ -2,8 +2,9 @@ import type {
   LarkChannel,
   LarkChannelOptions,
   NormalizedMessage,
+  RawCardActionEvent,
 } from '@larksuite/channel';
-import { createLarkChannel } from '@larksuite/channel';
+import { createLarkChannel, normalizeCardAction } from '@larksuite/channel';
 import { dirname, join } from 'node:path';
 import { claudeCapability, codexCapability } from '../agent/capability';
 import { modelLabel, normalizeModelSelection, resolveModelArg } from '../agent/models';
@@ -18,6 +19,7 @@ import type { AgentAdapter, AgentEvent } from '../agent/types';
 import { handleCardAction } from '../card/dispatcher';
 import { CallbackAuth } from '../card/callback-auth';
 import { CallbackNonceStore } from '../card/callback-store';
+import { CardWebhooks, isCardWebhookClick } from '../card/webhook';
 import { renderCard } from '../card/run-renderer';
 import {
   finalizeIfRunning,
@@ -270,6 +272,10 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   };
 
   const channel = createLarkChannel(opts);
+  const cardWebhooks = callbackAuth && deps.appPaths?.mediaDir
+    ? new CardWebhooks(dirname(deps.appPaths.mediaDir), cfg.accounts.app.id, callbackAuth)
+    : undefined;
+  await cardWebhooks?.pruneExpired().catch((err) => log.fail('card-webhook', err, { step: 'prune' }));
   const media = new MediaCache(channel, deps.appPaths?.mediaDir);
 
   // Pending → run handoff: while a run is active on a chat, block its pending
@@ -356,6 +362,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       log.info('intake', 'reject', { chatId: evt.chatId, reason: evt.reason });
     },
     cardAction: async (evt) => {
+      if (isCardWebhookClick(evt.action.value)) return;
       await withTrace({ chatId: evt.chatId, msgId: evt.messageId }, async () => {
         await handleCardAction({
           channel,
@@ -465,6 +472,20 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     controls.meeting = meetingManager;
   }
 
+  // The SDK deduplicates identical button clicks for hours. Use the verified
+  // raw event for these buttons so a fresh click can retry a failed delivery.
+  const unsubscribeCardWebhooks = cardWebhooks && channel.onRawEvent('card.action.trigger', (raw) => {
+    const evt = normalizeCardAction(raw as RawCardActionEvent);
+    if (!evt || !isCardWebhookClick(evt.action.value)) return;
+    // Queue work and let the SDK acknowledge Feishu within its callback deadline.
+    cardWebhooks.enqueue(channel, evt, async () => {
+      const mode = await chatModeCache.resolve(channel, evt.chatId);
+      const operator = evt.operator.openId;
+      return (mode === 'p2p'
+        ? canUseDm(controls.profileConfig, controls, operator)
+        : canUseGroup(controls.profileConfig, controls, evt.chatId, operator)).ok;
+    });
+  });
   await channel.connect();
   const ownerRefresh = createOwnerRefreshController({
     controls,
@@ -519,12 +540,14 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       meetingManager?.dispose();
       controls.meeting = undefined;
       pending.cancelAll();
+      unsubscribeCardWebhooks?.();
       const [disconnectResult, stopAllResult, ...flushResults] = await Promise.allSettled([
         channel.disconnect(),
         activeRuns.stopAll(),
         sessions.flush(),
         sessionCatalog?.flush(),
         callbackNonceStore?.flush(),
+        cardWebhooks?.close(),
         workspaces.flush(),
       ]);
       if (stopAllResult.status === 'rejected') {

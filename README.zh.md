@@ -133,6 +133,54 @@ lark-channel-bridge profile export <name> --include-secrets --yes
 
 如果某个 profile 被建成了错误的 agent 类型，先 `stop` 或 `unregister --profile <name>` 清理对应后台服务，再 `profile remove <name>`，然后用正确的 `--agent` 重新创建。
 
+### 带签名的卡片按钮
+
+在飞书开放平台的「事件与回调 → 回调配置」中选择长连接，添加并发布 `card.action.trigger`。机器人需要发消息和创建、更新卡片的权限（`im:message:send_as_bot`、`cardkit:card:write`）。发送和接收点击使用同一个运行中的 Bridge profile。
+
+在 `~/.lark-channel/profiles/<profile>/card-webhooks.json` 配置业务接口。把接口共享密钥放在 `secretFile` 指定的文件中。相对路径从当前 profile 目录解析。
+
+```json
+{
+  "approveOrder": {
+    "url": "https://example.com/webhooks/approve-order",
+    "secretFile": "approve-order.key"
+  }
+}
+```
+
+将 CardKit 2.0 卡片保存为 `card.json`。按钮的 `bridge_webhook` 引用上面的接口名，`data` 是要传给接口的业务参数。
+
+```json
+{
+  "schema": "2.0",
+  "body": {
+    "elements": [{
+      "tag": "button",
+      "type": "primary_filled",
+      "width": "fill",
+      "text": { "tag": "plain_text", "content": "确认订单" },
+      "behaviors": [{
+        "type": "callback",
+        "value": {
+          "bridge_webhook": "approveOrder",
+          "data": { "orderId": "1001" }
+        }
+      }]
+    }]
+  }
+}
+```
+
+```bash
+lark-channel-bridge card send --profile codex --chat-id oc_xxx --operator ou_xxx --file card.json
+```
+
+按钮有效期为 24 小时。只有 `--operator` 指定且符合当前 profile 访问策略的用户可触发。发到话题时可加 `--reply-to om_xxx --reply-in-thread`。命令返回包含 `message_id` 的 JSON。
+
+Bridge 向接口发出 JSON POST，字段为 `id`、`action`、`chat_id`、`message_id`、`operator_open_id` 和 `data`。接收端可用共享密钥校验 `X-Bridge-Signature`，其值为 `sha256=<hex>`，签名原文为 `X-Bridge-Timestamp`（Unix 秒）加 `.` 加原始请求体。接收端按 `Idempotency-Key` 去重，可覆盖超时后的重试。
+
+接口返回 HTTP 2xx 后，Bridge 在原消息中置灰被点击的按钮。接口失败时可再次点击。接口成功后如果更新卡片失败，再次点击只重试更新。
+
 ### 飞书内斜杠命令
 
 | 命令 | 作用 |
